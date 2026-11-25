@@ -1,0 +1,104 @@
+import { useEffect, useMemo, useState } from "react";
+import { supabase, configured, type Album, type Song, type Annotation } from "./lib/supabase";
+import { Search, Disc3, Music2, LockKeyhole, Plus, LogOut, ArrowLeft, Pencil, Trash2, X, Save, Headphones, BookOpen, ShieldCheck } from "lucide-react";
+
+type View = "home" | "song" | "admin";
+const emptySong = { title: "", slug: "", lyrics: "", cover_url: "", release_date: "", description: "", album_id: "" };
+const emptyAlbum = { title: "", slug: "", cover_url: "", release_date: "", description: "" };
+const slugify = (s: string) => s.toLowerCase().trim().replace(/ё/g,"е").replace(/[^a-zа-я0-9]+/gi,"-").replace(/^-|-$/g,"");
+
+export default function App() {
+  const [view,setView] = useState<View>("home");
+  const [songs,setSongs] = useState<Song[]>([]);
+  const [albums,setAlbums] = useState<Album[]>([]);
+  const [selected,setSelected] = useState<Song|null>(null);
+  const [annotations,setAnnotations] = useState<Annotation[]>([]);
+  const [search,setSearch] = useState("");
+  const [session,setSession] = useState<any>(null);
+  const [loading,setLoading] = useState(true);
+  const [notice,setNotice] = useState("");
+  const [loginOpen,setLoginOpen] = useState(false);
+  const [email,setEmail] = useState("");
+  const [password,setPassword] = useState("");
+  const [songForm,setSongForm] = useState<any>(emptySong);
+  const [albumForm,setAlbumForm] = useState<any>(emptyAlbum);
+  const [editingSong,setEditingSong] = useState<string|null>(null);
+  const [editingAlbum,setEditingAlbum] = useState<string|null>(null);
+  const [annotationLine,setAnnotationLine] = useState("");
+  const [annotationBody,setAnnotationBody] = useState("");
+
+  async function load() {
+    if (!supabase) { setLoading(false); return; }
+    const [{data:s},{data:a}] = await Promise.all([
+      supabase.from("songs").select("*, albums(*)").order("created_at",{ascending:false}),
+      supabase.from("albums").select("*").order("created_at",{ascending:false})
+    ]);
+    setSongs((s||[]) as Song[]); setAlbums((a||[]) as Album[]); setLoading(false);
+  }
+  useEffect(() => {
+    if (!supabase) { setLoading(false); return; }
+    supabase.auth.getSession().then(({data})=>setSession(data.session));
+    const {data:{subscription}} = supabase.auth.onAuthStateChange((_e,s)=>setSession(s));
+    load(); return ()=>subscription.unsubscribe();
+  },[]);
+  async function openSong(song: Song) {
+    setSelected(song); setView("song");
+    if (supabase) { const {data} = await supabase.from("annotations").select("*").eq("song_id",song.id).order("position"); setAnnotations((data||[]) as Annotation[]); }
+  }
+  async function signIn(e:React.FormEvent) {
+    e.preventDefault(); if (!supabase) return;
+    const {error} = await supabase.auth.signInWithPassword({email,password});
+    setNotice(error ? error.message : "Вход выполнен."); if (!error) setLoginOpen(false);
+  }
+  async function saveSong(e:React.FormEvent) {
+    e.preventDefault(); if (!supabase) return;
+    const payload = {...songForm, slug:songForm.slug || slugify(songForm.title), cover_url:songForm.cover_url||null, release_date:songForm.release_date||null, album_id:songForm.album_id||null};
+    const result = editingSong ? await supabase.from("songs").update(payload).eq("id",editingSong) : await supabase.from("songs").insert(payload);
+    setNotice(result.error?.message || "Трек сохранён."); if (!result.error) { setSongForm(emptySong); setEditingSong(null); await load(); }
+  }
+  async function saveAlbum(e:React.FormEvent) {
+    e.preventDefault(); if (!supabase) return;
+    const payload = {...albumForm, slug:albumForm.slug || slugify(albumForm.title), cover_url:albumForm.cover_url||null, release_date:albumForm.release_date||null};
+    const result = editingAlbum ? await supabase.from("albums").update(payload).eq("id",editingAlbum) : await supabase.from("albums").insert(payload);
+    setNotice(result.error?.message || "Альбом сохранён."); if (!result.error) { setAlbumForm(emptyAlbum); setEditingAlbum(null); await load(); }
+  }
+  async function removeSong(id:string) {
+    if (!supabase || !confirm("Удалить этот трек?")) return;
+    const {error}=await supabase.from("songs").delete().eq("id",id); setNotice(error?.message||"Трек удалён."); await load();
+  }
+  async function removeAlbum(id:string) {
+    if (!supabase || !confirm("Удалить альбом? Треки останутся без альбома.")) return;
+    const {error}=await supabase.from("albums").delete().eq("id",id); setNotice(error?.message||"Альбом удалён."); await load();
+  }
+  async function addAnnotation() {
+    if (!supabase || !selected || !annotationLine.trim() || !annotationBody.trim()) return;
+    const {error}=await supabase.from("annotations").insert({song_id:selected.id,line_text:annotationLine,body:annotationBody,position:annotations.length});
+    setNotice(error?.message||"Аннотация добавлена."); setAnnotationLine(""); setAnnotationBody(""); const {data}=await supabase.from("annotations").select("*").eq("song_id",selected.id).order("position"); setAnnotations((data||[]) as Annotation[]);
+  }
+  const filtered = useMemo(()=>songs.filter(s=>(s.title+" "+(s.albums?.title||"")).toLowerCase().includes(search.toLowerCase())),[songs,search]);
+  const isAdmin = Boolean(session?.user);
+  const goHome=()=>{setView("home");setSelected(null);};
+  if (!configured) return <div className="setup"><div className="setup-card"><div className="brand-mark">MG</div><h1>Сначала подключим базу данных</h1><p>Проект уже собран. Чтобы сайт стал рабочим, создай проект Supabase, добавь ключи в файл <code>.env</code> и выполни SQL-инструкцию из папки <code>supabase</code>.</p><ol><li>Создай бесплатный проект на Supabase.</li><li>Открой SQL Editor и выполни <code>supabase/schema.sql</code>.</li><li>Скопируй Project URL и anon key в <code>.env</code>.</li><li>Создай пользователя в Authentication → Users и добавь его UUID в SQL-политики.</li></ol><p className="muted">Подробная инструкция находится в README.md.</p></div></div>;
+
+  return <div className="app-shell">
+    <header className="topbar"><button className="wordmark" onClick={goHome}><span className="brand-mark">MG</span><span>MY<span className="accent">GENIUS</span></span></button><nav><button onClick={goHome}>Главная</button><button onClick={()=>setView("home")}>Тексты</button><button onClick={()=>setView("home")}>Альбомы</button></nav><div className="top-actions"><button className="icon-btn" onClick={()=>setLoginOpen(true)} title="Вход"><LockKeyhole size={17}/></button><button className="admin-link" onClick={()=>isAdmin?setView("admin"):setLoginOpen(true)}>{isAdmin?"Админ-панель":"Войти"}</button></div></header>
+    <main>
+      {view==="home" && <><section className="hero"><div className="eyebrow"><span className="pulse"/> PERSONAL MUSIC ARCHIVE</div><h1>Музыка — это<br/><em>больше, чем звук.</em></h1><p>Тексты, истории, скрытые смыслы и заметки автора. Всё творчество в одном месте.</p><div className="hero-stats"><span><strong>{songs.length}</strong> треков</span><span><strong>{albums.length}</strong> альбомов</span></div></section>
+        <section className="content-section"><div className="section-head"><div><div className="eyebrow">LIBRARY</div><h2>Музыкальный архив</h2></div><div className="searchbox"><Search size={16}/><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Найти трек или альбом..."/></div></div>
+        {loading?<p className="muted">Загружаем архив...</p>:filtered.length===0?<div className="empty"><Music2 size={30}/><h3>Пока здесь тихо</h3><p>Добавь первый трек через админ-панель.</p></div>:<div className="song-grid">{filtered.map(song=><button className="song-card" key={song.id} onClick={()=>openSong(song)}><div className="cover">{song.cover_url?<img src={song.cover_url} alt="Обложка"/>:<Disc3 size={42}/>}<span className="play"><Headphones size={17}/></span></div><div className="song-info"><b>{song.title}</b><span>{song.albums?.title||"Сингл"}{song.release_date?" · "+song.release_date.slice(0,4):""}</span></div></button>)}</div>}</section>
+        <section className="content-section album-section"><div className="section-head"><div><div className="eyebrow">DISCOGRAPHY</div><h2>Релизы</h2></div></div><div className="album-grid">{albums.map(a=><div className="album-card" key={a.id}><div className="album-cover">{a.cover_url?<img src={a.cover_url} alt="Обложка альбома"/>:<Disc3 size={38}/>}</div><b>{a.title}</b><span>{a.release_date||"Дата не указана"}</span><p>{a.description}</p></div>)}</div></section>
+      </>}
+      {view==="song" && selected && <section className="song-page"><button className="back" onClick={goHome}><ArrowLeft size={16}/> К архиву</button><div className="song-heading"><div className="large-cover">{selected.cover_url?<img src={selected.cover_url} alt="Обложка"/>:<Disc3 size={64}/>}</div><div><div className="eyebrow">TRACK LYRICS</div><h1>{selected.title}</h1><p>{selected.albums?.title||"Сингл"} {selected.release_date?"· "+selected.release_date:""}</p>{selected.description&&<p className="description">{selected.description}</p>}</div></div><div className="lyrics-layout"><article className="lyrics"><div className="eyebrow">ТЕКСТ ПЕСНИ</div>{selected.lyrics.split("\n").map((line,i)=><p key={i} className={line.trim()===""?"blank":""}>{line||" "}</p>)}</article><aside className="annotations"><div className="eyebrow">ANNOTATIONS</div><h3>Заметки автора</h3>{annotations.length===0?<p className="muted">Пока нет аннотаций к этому треку.</p>:annotations.map(a=><div className="annotation" key={a.id}><b>“{a.line_text}”</b><p>{a.body}</p></div>)}{isAdmin&&<div className="annotation-form"><h4>Добавить аннотацию</h4><input value={annotationLine} onChange={e=>setAnnotationLine(e.target.value)} placeholder="Строчка из песни"/><textarea value={annotationBody} onChange={e=>setAnnotationBody(e.target.value)} placeholder="Что она означает?"/><button className="primary" onClick={addAnnotation}><Plus size={15}/> Добавить</button></div>}</aside></div></section>}
+      {view==="admin" && <section className="admin-page"><div className="admin-title"><div><div className="eyebrow">CONTROL ROOM</div><h1>Админ-панель</h1><p>Управление музыкальным архивом</p></div><button className="ghost" onClick={async()=>{await supabase?.auth.signOut();setView("home");}}><LogOut size={15}/> Выйти</button></div>
+        {!isAdmin?<div className="empty"><LockKeyhole/><h3>Нужна авторизация</h3><button className="primary" onClick={()=>setLoginOpen(true)}>Войти</button></div>:<>
+        <div className="admin-grid"><form className="editor-card" onSubmit={saveSong}><div className="form-head"><h2>{editingSong?"Редактировать трек":"Новый трек"}</h2><Music2/></div><label>Название<input required value={songForm.title} onChange={e=>setSongForm({...songForm,title:e.target.value,slug:editingSong?songForm.slug:slugify(e.target.value)})}/></label><label>URL обложки<input value={songForm.cover_url} onChange={e=>setSongForm({...songForm,cover_url:e.target.value})} placeholder="https://..."/></label><label>Альбом<select value={songForm.album_id} onChange={e=>setSongForm({...songForm,album_id:e.target.value})}><option value="">Сингл / без альбома</option>{albums.map(a=><option key={a.id} value={a.id}>{a.title}</option>)}</select></label><label>Дата релиза<input type="date" value={songForm.release_date} onChange={e=>setSongForm({...songForm,release_date:e.target.value})}/></label><label>Описание<textarea value={songForm.description} onChange={e=>setSongForm({...songForm,description:e.target.value})}/></label><label>Текст песни<textarea required className="lyrics-input" value={songForm.lyrics} onChange={e=>setSongForm({...songForm,lyrics:e.target.value})} placeholder="Вставь текст песни..."/></label><div className="form-actions"><button className="primary"><Save size={15}/> Сохранить</button>{editingSong&&<button type="button" className="ghost" onClick={()=>{setEditingSong(null);setSongForm(emptySong)}}>Отмена</button>}</div></form>
+        <div className="editor-card"><div className="form-head"><h2>Треки в архиве</h2><BookOpen/></div>{songs.map(s=><div className="manage-row" key={s.id}><div><b>{s.title}</b><span>{s.albums?.title||"Сингл"}</span></div><button className="icon-btn" onClick={()=>{setEditingSong(s.id);setSongForm({title:s.title,slug:s.slug,lyrics:s.lyrics,cover_url:s.cover_url||"",release_date:s.release_date||"",description:s.description||"",album_id:s.album_id||""});window.scrollTo({top:0,behavior:"smooth"})}}><Pencil size={15}/></button><button className="icon-btn danger" onClick={()=>removeSong(s.id)}><Trash2 size={15}/></button></div>)}</div>
+        <form className="editor-card" onSubmit={saveAlbum}><div className="form-head"><h2>{editingAlbum?"Редактировать альбом":"Новый альбом"}</h2><Disc3/></div><label>Название<input required value={albumForm.title} onChange={e=>setAlbumForm({...albumForm,title:e.target.value,slug:editingAlbum?albumForm.slug:slugify(e.target.value)})}/></label><label>URL обложки<input value={albumForm.cover_url} onChange={e=>setAlbumForm({...albumForm,cover_url:e.target.value})}/></label><label>Дата релиза<input type="date" value={albumForm.release_date} onChange={e=>setAlbumForm({...albumForm,release_date:e.target.value})}/></label><label>Описание<textarea value={albumForm.description} onChange={e=>setAlbumForm({...albumForm,description:e.target.value})}/></label><div className="form-actions"><button className="primary"><Save size={15}/> Сохранить альбом</button>{editingAlbum&&<button type="button" className="ghost" onClick={()=>{setEditingAlbum(null);setAlbumForm(emptyAlbum)}}>Отмена</button>}</div><div className="album-manage">{albums.map(a=><div className="manage-row" key={a.id}><b>{a.title}</b><button type="button" className="icon-btn" onClick={()=>{setEditingAlbum(a.id);setAlbumForm({title:a.title,slug:a.slug,cover_url:a.cover_url||"",release_date:a.release_date||"",description:a.description||""})}}><Pencil size={15}/></button><button type="button" className="icon-btn danger" onClick={()=>removeAlbum(a.id)}><Trash2 size={15}/></button></div>)}</div></form>
+        </div></>}
+      </section>}
+    </main>
+    <footer><span>MYGENIUS © {new Date().getFullYear()}</span><span>PERSONAL MUSIC ARCHIVE</span></footer>
+    {notice&&<div className="toast" onClick={()=>setNotice("")}>{notice}<X size={14}/></div>}
+    {loginOpen&&<div className="modal-backdrop" onClick={()=>setLoginOpen(false)}><form className="login-modal" onSubmit={signIn} onClick={e=>e.stopPropagation()}><button type="button" className="close" onClick={()=>setLoginOpen(false)}><X/></button><div className="brand-mark">MG</div><div className="eyebrow">PRIVATE ACCESS</div><h2>Вход в архив</h2><p className="muted">Только для владельца сайта.</p><label>Email<input type="email" required value={email} onChange={e=>setEmail(e.target.value)}/></label><label>Пароль<input type="password" required value={password} onChange={e=>setPassword(e.target.value)}/></label><button className="primary full">Войти в админ-панель</button></form></div>}
+  </div>;
+}
