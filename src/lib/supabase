@@ -1,0 +1,11 @@
+import { createClient } from "@supabase/supabase-js";
+
+const url = import.meta.env.VITE_SUPABASE_URL as string | undefined;
+const key = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
+
+export const configured = Boolean(url && key && !url.includes("YOUR_PROJECT") && !key.includes("YOUR_"));
+export const supabase = configured ? createClient(url!, key!) : null;
+
+export type Album = { id: string; title: string; slug: string; cover_url: string | null; release_date: string | null; description: string | null };
+export type Song = { id: string; title: string; slug: string; lyrics: string; cover_url: string | null; release_date: string | null; description: string | null; album_id: string | null; albums?: Album | null };
+export type Annotation = { id: string; song_id: string; line_text: string; body: string; position: number };
