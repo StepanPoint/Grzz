@@ -1,0 +1,4 @@
+rm my-genius-starter.zip
+git add -A
+git commit -m "Extract starter files"
+git push
